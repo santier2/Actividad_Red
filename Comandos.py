@@ -7,7 +7,7 @@ USERNAME_CISCO = "netadmin"
 PASSWORD_CISCO = "Adm1n#Lab"
 
 USERNAME_TIK   = "admin"
-PASSWORD_TIK   = "Adm1n#Lab"
+PASSWORD_TIK   = "1234"
 
 # -----------------------------
 # Dispositivos en orden
@@ -167,6 +167,7 @@ for device in devices:
     connection.disconnect()
 
 print("\n Configuracion finalizada en todos los dispositivos.")
+
 
 
 
