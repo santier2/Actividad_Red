@@ -21,14 +21,14 @@ r1 = {
     'device_type': 'mikrotik_routeros',
     'host': '10.10.12.1',
     'username': 'admin',
-    'password': 'admin',
+    'password': '1234',
 }
 
 r2 = {
     'device_type': 'mikrotik_routeros',
     'host': '10.10.12.4',
     'username': 'admin',
-    'password': 'admin',
+    'password': '1234',
 }
 
 # -------------------------
@@ -161,3 +161,4 @@ if __name__ == "__main__":
 
     # SW2 (solo gestión acceso 1299)
     run_cfg(sw2, cfg_sw2)
+
