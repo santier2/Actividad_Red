@@ -41,11 +41,14 @@ sw2_phase_transitory = [
     "vlan 230","name VENTAS",
     "vlan 231","name TECNICA",
     "vlan 232","name VISITANTES",
-    "interface Ethernet0/1","switchport mode access","switchport access vlan 230","no shutdown",
+    "interface Ethernet0/1",
+    "switchport mode access",
+    "switchport access vlan 230",
+    "no shutdown",
     "interface Ethernet0/0",
     "switchport trunk encapsulation dot1q",
     "switchport mode trunk",
-    "switchport trunk allowed vlan 1299,230,231,232,239",
+    "switchport trunk allowed vlan 1299,230,231,232",
     "switchport trunk native vlan 1299",
     "no shutdown",
 ]
@@ -155,5 +158,6 @@ if __name__ == "__main__":
             print(f"{host:20} -> Configurado correctamente")
         else:
             print(f"{host:20} -> ERROR: {err}")
+
 
 
