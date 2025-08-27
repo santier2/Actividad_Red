@@ -18,13 +18,14 @@ Bloque de gestión: 10.10.12.0/29
 Usuario/clave común en todos: admin / 1234
 -----------------------------------------------
 
-### PC SYSADMIN (Linux)
+📌 PC Sysadmin (Linux)
+sudo ip addr flush dev ens3
 sudo ip addr add 10.10.12.5/29 dev ens3
-sudo ip link set ens3 up  
+sudo ip link set ens3 up
 sudo ip route add default via 10.10.12.1
 
------------------------------------------------
-### SW1 - Switch Principal (Cisco IOS)
+
+📌 SW1 – Switch Principal
 conf t
  hostname SW1
  ip domain-name lab.local
@@ -36,36 +37,41 @@ conf t
   transport input ssh
  exit
 
- # VLAN de gestión
- vlan 1299
-  name GESTION
- exit
+# VLANs
+vlan 239
+ name NATIVA
+vlan 1299
+ name GESTION
+exit
 
- interface Vlan1299
-  ip address 10.10.12.2 255.255.255.248
-  no shutdown
- exit
+# Interfaz de gestión
+interface Vlan1299
+ ip address 10.10.12.2 255.255.255.248
+ no shutdown
+exit
 
- # Puerto hacia PC Sysadmin (gestión)
- interface Ethernet1/0
-  switchport mode access
-  switchport access vlan 1299
-  no shutdown
- exit
+# Puerto hacia PC Sysadmin
+interface Ethernet1/0
+ switchport mode access
+ switchport access vlan 1299
+ no shutdown
+exit
 
- # Puerto hacia R1 - INICIALMENTE EN MODO ACCESS
- interface Ethernet0/0
-  switchport mode access
-  switchport access vlan 1299
-  no shutdown
- exit
+# Puerto hacia R1 → ahora TRUNK
+interface Ethernet0/0
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 239
+ switchport trunk allowed vlan 239,1299
+ no shutdown
+exit
 
- ip default-gateway 10.10.12.1
+ip default-gateway 10.10.12.1
 end
 write memory
 
------------------------------------------------
-### SW2 - Switch Remoto (Cisco IOS)
+
+📌 SW2 – Switch Remoto
 conf t
  hostname SW2
  ip domain-name lab.local
@@ -77,96 +83,93 @@ conf t
   transport input ssh
  exit
 
- # VLAN de gestión
- vlan 1299
-  name GESTION
- exit
+# VLANs
+vlan 239
+ name NATIVA
+vlan 1299
+ name GESTION
+exit
 
- interface Vlan1299
-  ip address 10.10.12.3 255.255.255.248
-  no shutdown
- exit
+# Interfaz de gestión
+interface Vlan1299
+ ip address 10.10.12.3 255.255.255.248
+ no shutdown
+exit
 
- # Puerto hacia R2 - INICIALMENTE EN MODO ACCESS
- interface Ethernet0/0
-  switchport mode access
-  switchport access vlan 1299
-  no shutdown
- exit
+# Puerto hacia R2 → ahora TRUNK
+interface Ethernet0/0
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 239
+ switchport trunk allowed vlan 239,1299
+ no shutdown
+exit
 
- # Puerto hacia Usuario Remoto
- interface Ethernet0/1
-  switchport mode access
-  switchport access vlan 1299
-  no shutdown
- exit
+# Puerto hacia usuario remoto (solo gestión)
+interface Ethernet0/1
+ switchport mode access
+ switchport access vlan 1299
+ no shutdown
+exit
 
- ip default-gateway 10.10.12.1
+ip default-gateway 10.10.12.1
 end
 write memory
 
------------------------------------------------
-### R1 - MikroTik1 (principal)
-# Crear bridge principal con VLAN filtering
+
+📌 R1 – MikroTik1 (principal)
+# Bridge con VLAN filtering
 /interface bridge add name=br-core vlan-filtering=yes
 
-# Configurar puertos del bridge
-/interface bridge port add bridge=br-core interface=ether2 pvid=1299 comment="Hacia SW1"
-/interface bridge port add bridge=br-core interface=ether3 pvid=1299 comment="Hacia R2"
+# Puertos al bridge
+/interface bridge port add bridge=br-core interface=ether2 comment="Hacia SW1"
+/interface bridge port add bridge=br-core interface=ether3 comment="Hacia R2"
 
-# Configurar VLAN de gestión en el bridge
-/interface bridge vlan add bridge=br-core vlan-ids=1299 tagged=br-core,ether3 untagged=ether2
+# VLANs en el bridge
+/interface bridge vlan add bridge=br-core vlan-ids=239 untagged=ether2,ether3
+/interface bridge vlan add bridge=br-core vlan-ids=1299 tagged=br-core,ether2,ether3
 
-# Crear interfaz VLAN para gestión
+# Interfaz VLAN de gestión
 /interface vlan add name=gestion1299 vlan-id=1299 interface=br-core
-
-# Asignar IP de gestión
 /ip address add address=10.10.12.1/29 interface=gestion1299
 
-# Configurar usuario SSH
+# Usuario y SSH
 /user add name=admin password=1234 group=full
-
-# Habilitar SSH y deshabilitar servicios no necesarios
 /ip service set ssh disabled=no
 /ip service set telnet disabled=yes
 /ip service set ftp disabled=yes
 /ip service set www disabled=yes
 
-# Guardar configuración
-/system backup save name=inicial
+/system backup save name=trunk
 
------------------------------------------------
-### R2 - MikroTik2 (remoto)
-# Crear bridge remoto con VLAN filtering
+
+📌 R2 – MikroTik2 (remoto)
+# Bridge con VLAN filtering
 /interface bridge add name=br-remote vlan-filtering=yes
 
-# Configurar puertos del bridge  
-/interface bridge port add bridge=br-remote interface=ether2 pvid=1299 comment="Hacia R1"
-/interface bridge port add bridge=br-remote interface=ether1 pvid=1299 comment="Hacia SW2"
+# Puertos al bridge
+/interface bridge port add bridge=br-remote interface=ether2 comment="Hacia R1"
+/interface bridge port add bridge=br-remote interface=ether1 comment="Hacia SW2"
 
-# Configurar VLAN de gestión en el bridge
-/interface bridge vlan add bridge=br-remote vlan-ids=1299 tagged=br-remote,ether2 untagged=ether1
+# VLANs en el bridge
+/interface bridge vlan add bridge=br-remote vlan-ids=239 untagged=ether1,ether2
+/interface bridge vlan add bridge=br-remote vlan-ids=1299 tagged=br-remote,ether1,ether2
 
-# Crear interfaz VLAN para gestión
+# Interfaz VLAN de gestión
 /interface vlan add name=gestion1299 vlan-id=1299 interface=br-remote
-
-# Asignar IP de gestión
 /ip address add address=10.10.12.4/29 interface=gestion1299
 
-# Ruta hacia el gateway (R1)
+# Ruta hacia R1
 /ip route add dst-address=0.0.0.0/0 gateway=10.10.12.1
 
-# Configurar usuario SSH
+# Usuario y SSH
 /user add name=admin password=1234 group=full
-
-# Habilitar SSH y deshabilitar servicios no necesarios
 /ip service set ssh disabled=no
 /ip service set telnet disabled=yes
 /ip service set ftp disabled=yes
 /ip service set www disabled=yes
 
-# Guardar configuración
-/system backup save name=inicial
+/system backup save name=trunk
 
 -----------------------------------------------
 ### Verificación desde PC Sysadmin
