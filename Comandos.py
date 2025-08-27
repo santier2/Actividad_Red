@@ -134,42 +134,39 @@ cfg_r2 = [
 # -----------------------------
 for device in devices:
     print(f"\n Conectando a {device['host']}...")
-    try:
-        connection = ConnectHandler(**device)
+    connection = ConnectHandler(**device)
 
-        # Para Cisco: entrar a modo enable
-        if device["device_type"] == "cisco_ios":
-            connection.enable()
+    # Para Cisco: entrar a modo enable
+    if device["device_type"] == "cisco_ios":
+        connection.enable()
 
-        if device["host"] == "10.10.12.2":  # SW1
-            connection.send_config_set(cfg_sw)
-            connection.send_config_set(cfg_trunk_sw1)
-            print(connection.send_command("show vlan brief"))
-            print(connection.send_command("show interface trunk"))
+    if device["host"] == "10.10.12.2":  # SW1
+        connection.send_config_set(cfg_sw)
+        connection.send_config_set(cfg_trunk_sw1)
+        print(connection.send_command("show vlan brief"))
+        print(connection.send_command("show interface trunk"))
 
-        elif device["host"] == "10.10.12.1":  # MikroTik R1
-            for cmd in cfg_r1:
-                connection.send_command(cmd)
-            print(connection.send_command("/ip address print"))
-            print(connection.send_command("/ip dhcp-server print"))
-            print(connection.send_command("/ip route print"))
+    elif device["host"] == "10.10.12.1":  # MikroTik R1
+        for cmd in cfg_r1:
+            connection.send_command(cmd)
+        print(connection.send_command("/ip address print"))
+        print(connection.send_command("/ip dhcp-server print"))
+        print(connection.send_command("/ip route print"))
 
-        elif device["host"] == "10.10.12.4":  # MikroTik R2
-            for cmd in cfg_r2:
-                connection.send_command(cmd)
-            print(connection.send_command("/ip route print"))
+    elif device["host"] == "10.10.12.4":  # MikroTik R2
+        for cmd in cfg_r2:
+            connection.send_command(cmd)
+        print(connection.send_command("/ip route print"))
 
-        elif device["host"] == "10.10.12.3":  # SW2
-            connection.send_config_set(cfg_sw)
-            connection.send_config_set(cfg_trunk_sw2)
-            print(connection.send_command("show vlan brief"))
-            print(connection.send_command("show interface trunk"))
+    elif device["host"] == "10.10.12.3":  # SW2
+        connection.send_config_set(cfg_sw)
+        connection.send_config_set(cfg_trunk_sw2)
+        print(connection.send_command("show vlan brief"))
+        print(connection.send_command("show interface trunk"))
 
-        connection.disconnect()
-
-    except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
-        print(f" Error al conectar con {device['host']}: {e}")
+    connection.disconnect()
 
 print("\n Configuracion finalizada en todos los dispositivos.")
+
 
 
