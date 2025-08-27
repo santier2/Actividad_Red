@@ -31,13 +31,10 @@ sw1_phase_transitory = [
     "interface Ethernet0/0",
     "switchport trunk encapsulation dot1q",
     "switchport mode trunk",
-    "switchport trunk allowed vlan 1299,230,231,232,239",
+    "switchport trunk allowed vlan 1299,230,231,232",
     "switchport trunk native vlan 1299",
     "no shutdown",
 ]
-
-# SW1 cambiar native a 239
-sw1_phase_finalize = ["interface Ethernet0/0","switchport trunk native vlan 239"]
 
 # SW2 VLANs + trunk transitorio hacia R2
 sw2_phase_transitory = [
@@ -52,9 +49,6 @@ sw2_phase_transitory = [
     "switchport trunk native vlan 1299",
     "no shutdown",
 ]
-
-# SW2 cambiar native a 239 (opcional)
-sw2_finalize = ["interface Ethernet0/0","switchport trunk native vlan 239"]
 
 # R1 VLANs, DHCP, NAT
 r1_phase1 = [
@@ -78,13 +72,6 @@ r1_phase1 = [
     "/ip dhcp-server network add address=10.10.12.112/29 gateway=10.10.12.113",
     "/ip firewall nat add chain=srcnat src-address=10.10.12.64/27 out-interface=ether1 action=masquerade",
     "/ip firewall nat add chain=srcnat src-address=10.10.12.96/28 out-interface=ether1 action=masquerade",
-]
-
-# R1 cambiar pvid a 239
-r1_phase2 = [
-    "/interface bridge port set [find interface=ether2] pvid=239",
-    "/interface bridge vlan set [find vlan-ids=1299] tagged=br-core,ether2,ether3 untagged=",
-    "/interface bridge vlan set [find vlan-ids=239] tagged=br-core untagged=ether2,ether3",
 ]
 
 # R2 preparar VLANs (incluyendo gestion y transporte)
@@ -168,4 +155,5 @@ if __name__ == "__main__":
             print(f"{host:20} -> Configurado correctamente")
         else:
             print(f"{host:20} -> ERROR: {err}")
+
 
