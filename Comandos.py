@@ -70,6 +70,7 @@ cfg_trunk_sw1 = [
     " switchport trunk encapsulation dot1q",
     " switchport mode trunk",
     " switchport trunk allowed vlan 230,231,232,1299",
+    " duplex full",
     " no shutdown"
 ]
 
@@ -78,6 +79,7 @@ cfg_trunk_sw2 = [
     " switchport trunk encapsulation dot1q",
     " switchport mode trunk",
     " switchport trunk allowed vlan 230,231,232,1299",
+    " duplex full",
     " no shutdown"
 ]
 
