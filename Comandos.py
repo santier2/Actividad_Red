@@ -6,7 +6,7 @@ import time, sys
 # Credenciales unificadas
 # --------------------------
 USERNAME = "admin"
-PASSWORD = "123"
+PASSWORD = "1234"
 
 # --------------------------
 # Dispositivos
@@ -137,4 +137,5 @@ if __name__ == "__main__":
     run_check(sw2, ["show vlan brief","show interface trunk"])
     run_check(r1, ["/interface bridge vlan print","/ip address print","/ip dhcp-server print"])
     run_check(r2, ["/interface bridge vlan print","/ip address print"])
+
 
