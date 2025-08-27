@@ -79,7 +79,7 @@ sw2_phase_transitory = [
     "vlan 231", "name TECNICA",
     "vlan 232", "name VISITANTES",
     # ejemplo puertos locales (ajustar)
-    "interface Ethernet0/1",
+    "interface Ethernet1/0",
     "switchport mode access",
     "switchport access vlan 230",
     "no shutdown",
@@ -231,10 +231,6 @@ if __name__ == "__main__":
     run_cfg(sw2, sw2_finalize)
 
     # 8) Verificaciones (muestra)
-/*
-    # En cisco: show vlan brief / show interface trunk
-    # En mikrotik: /interface bridge vlan print ; /ip address print ; /ip dhcp-server print
-*/
     print("\n>>> Verificaciones:")
     run_check(sw1, ["show vlan brief", "show interface trunk"])
     run_check(sw2, ["show vlan brief", "show interface trunk"])
@@ -242,3 +238,4 @@ if __name__ == "__main__":
     run_check(r2, ["/interface bridge vlan print", "/ip address print", "/ip route print"])
 
     print("\n>>> FIN. Comprobá pings desde la PC Sysadmin y accesos SSH.")
+
