@@ -126,8 +126,8 @@ r1_phase1 = [
     "/ip dhcp-server network add address=10.10.12.112/29 gateway=10.10.12.113",
 
     # NAT: Ventas y Técnica salen a Internet por ether1 (ajustar salida si es otra)
-/ip firewall nat add chain=srcnat src-address=10.10.12.64/27 out-interface=ether1 action=masquerade
-/ip firewall nat add chain=srcnat src-address=10.10.12.96/28 out-interface=ether1 action=masquerade
+    "/ip firewall nat add chain=srcnat src-address=10.10.12.64/27 out-interface=ether1 action=masquerade",
+    "/ip firewall nat add chain=srcnat src-address=10.10.12.96/28 out-interface=ether2 action=masquerade"
 ]
 
 # --------------------------
@@ -238,4 +238,5 @@ if __name__ == "__main__":
     run_check(r2, ["/interface bridge vlan print", "/ip address print", "/ip route print"])
 
     print("\n>>> FIN. Comprobá pings desde la PC Sysadmin y accesos SSH.")
+
 
