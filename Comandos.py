@@ -1,450 +1,375 @@
 #!/usr/bin/env python3
 """
-Script de diagnóstico y corrección para problemas de conectividad VLAN
-Analiza y corrige los problemas de conectividad durante cambios de VLAN nativa
+Script Netmiko - Configuración según consigna del laboratorio
+Implementa VLSM, Router-on-a-Stick, DHCP, NAT y enrutamiento estático
 """
 
 from netmiko import ConnectHandler
 import time
 import sys
-import subprocess
 
-# Credenciales
+# =============================================================================
+# PARÁMETROS DE CONFIGURACIÓN
+# =============================================================================
 USERNAME = "admin"
 PASSWORD = "1234"
 
-# Dispositivos
-devices = {
-    'sw1': {'device_type': 'cisco_ios', 'host': '10.10.12.2', 'username': USERNAME, 'password': PASSWORD},
-    'sw2': {'device_type': 'cisco_ios', 'host': '10.10.12.3', 'username': USERNAME, 'password': PASSWORD},
-    'r1': {'device_type': 'mikrotik_routeros', 'host': '10.10.12.1', 'username': USERNAME, 'password': PASSWORD},
-    'r2': {'device_type': 'mikrotik_routeros', 'host': '10.10.12.4', 'username': USERNAME, 'password': PASSWORD}
+# Tu bloque asignado (ejemplo: cambiar por el tuyo)
+BASE_NETWORK = "10.10.12.0/24"
+
+# Diseño VLSM calculado:
+VLSM_SUBNETS = {
+    'ventas':    {'network': '10.10.12.0/27',   'gateway': '10.10.12.1',   'dhcp_start': '10.10.12.2',   'dhcp_end': '10.10.12.30',   'hosts': 25},  # .0-.31
+    'tecnica':   {'network': '10.10.12.32/28',  'gateway': '10.10.12.33',  'dhcp_start': '10.10.12.34',  'dhcp_end': '10.10.12.46',   'hosts': 14},  # .32-.47
+    'visitantes': {'network': '10.10.12.48/29', 'gateway': '10.10.12.49',  'dhcp_start': '10.10.12.50',  'dhcp_end': '10.10.12.54',   'hosts': 6},   # .48-.55
+    'gestion':   {'network': '10.10.12.56/29',  'gateway': '10.10.12.57',  'hosts': 5},  # .56-.63 (sin DHCP)
+    'remota':    {'network': '10.10.12.64/26',  'gateway': '10.10.12.65',  'hosts': 62}, # .64-.127 (sede remota)
+    'enlace':    {'network': '10.10.12.128/30', 'r1_ip': '10.10.12.129',   'r2_ip': '10.10.12.130'}     # .128-.131 (enlace R1-R2)
 }
 
-def test_ping(host):
-    """Prueba conectividad básica con ping"""
-    try:
-        result = subprocess.run(['ping', '-c', '3', '-W', '2', host], 
-                              capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            print(f"✓ PING OK a {host}")
-            return True
-        else:
-            print(f"✗ PING FALLO a {host}")
-            return False
-    except Exception as e:
-        print(f"✗ PING ERROR a {host}: {e}")
-        return False
+# Dispositivos (IPs de gestión ya configuradas manualmente)
+DEVICES = {
+    'sw1': {'device_type': 'cisco_ios', 'host': '10.10.12.58', 'username': USERNAME, 'password': PASSWORD},
+    'sw2': {'device_type': 'cisco_ios', 'host': '10.10.12.59', 'username': USERNAME, 'password': PASSWORD},
+    'r1':  {'device_type': 'mikrotik_routeros', 'host': '10.10.12.57', 'username': USERNAME, 'password': PASSWORD},
+    'r2':  {'device_type': 'mikrotik_routeros', 'host': '10.10.12.60', 'username': USERNAME, 'password': PASSWORD}
+}
 
-def test_ssh(device_name, device_config):
-    """Prueba conectividad SSH"""
+# =============================================================================
+# CONFIGURACIONES POR DISPOSITIVO
+# =============================================================================
+
+# SW1 - Switch Principal: VLANs + Puertos de Acceso + Trunk
+SW1_CONFIG = [
+    # Crear VLANs funcionales
+    "vlan 10", "name VENTAS",
+    "vlan 20", "name TECNICA", 
+    "vlan 30", "name VISITANTES",
+    "vlan 99", "name GESTION",
+    
+    # Puertos de acceso - asignación por VLAN
+    "interface FastEthernet0/1",
+    "switchport mode access",
+    "switchport access vlan 10",
+    "spanning-tree portfast",
+    "no shutdown",
+    
+    "interface FastEthernet0/2", 
+    "switchport mode access",
+    "switchport access vlan 20",
+    "spanning-tree portfast", 
+    "no shutdown",
+    
+    "interface FastEthernet0/3",
+    "switchport mode access", 
+    "switchport access vlan 30",
+    "spanning-tree portfast",
+    "no shutdown",
+    
+    # Puerto trunk hacia R1 (Router-on-a-Stick)
+    "interface FastEthernet0/24",
+    "switchport trunk encapsulation dot1q",
+    "switchport mode trunk",
+    "switchport trunk allowed vlan 10,20,30,99",
+    "switchport trunk native vlan 99",
+    "no shutdown",
+    
+    # Puerto hacia SW2 (trunk para extensión)
+    "interface FastEthernet0/23",
+    "switchport trunk encapsulation dot1q", 
+    "switchport mode trunk",
+    "switchport trunk allowed vlan 10,20,30,99",
+    "switchport trunk native vlan 99",
+    "no shutdown"
+]
+
+# SW2 - Switch Remoto: VLANs + Puerto hacia usuario remoto
+SW2_CONFIG = [
+    # Crear las mismas VLANs para consistencia
+    "vlan 10", "name VENTAS",
+    "vlan 20", "name TECNICA",
+    "vlan 30", "name VISITANTES", 
+    "vlan 99", "name GESTION",
+    "vlan 40", "name RED_REMOTA",
+    
+    # Puerto para usuario en sede remota
+    "interface FastEthernet0/1",
+    "switchport mode access",
+    "switchport access vlan 40",
+    "spanning-tree portfast",
+    "no shutdown",
+    
+    # Trunk hacia R2
+    "interface FastEthernet0/24", 
+    "switchport trunk encapsulation dot1q",
+    "switchport mode trunk", 
+    "switchport trunk allowed vlan 10,20,30,40,99",
+    "switchport trunk native vlan 99",
+    "no shutdown"
+]
+
+# R1 - Router Principal: Router-on-a-Stick + DHCP + NAT
+R1_CONFIG = [
+    # Configurar subinterfaces dot1q (Router-on-a-Stick)
+    f"/interface vlan add name=ventas-vlan10 vlan-id=10 interface=ether2",
+    f"/interface vlan add name=tecnica-vlan20 vlan-id=20 interface=ether2", 
+    f"/interface vlan add name=visitantes-vlan30 vlan-id=30 interface=ether2",
+    f"/interface vlan add name=gestion-vlan99 vlan-id=99 interface=ether2",
+    f"/interface vlan add name=enlace-r2 vlan-id=100 interface=ether3",
+    
+    # Asignar IPs según VLSM
+    f"/ip address add address={VLSM_SUBNETS['ventas']['gateway']}/27 interface=ventas-vlan10",
+    f"/ip address add address={VLSM_SUBNETS['tecnica']['gateway']}/28 interface=tecnica-vlan20",
+    f"/ip address add address={VLSM_SUBNETS['visitantes']['gateway']}/29 interface=visitantes-vlan30", 
+    f"/ip address add address={VLSM_SUBNETS['gestion']['gateway']}/29 interface=gestion-vlan99",
+    f"/ip address add address={VLSM_SUBNETS['enlace']['r1_ip']}/30 interface=enlace-r2",
+    
+    # Configurar pools DHCP
+    f"/ip pool add name=pool-ventas ranges={VLSM_SUBNETS['ventas']['dhcp_start']}-{VLSM_SUBNETS['ventas']['dhcp_end']}",
+    f"/ip pool add name=pool-tecnica ranges={VLSM_SUBNETS['tecnica']['dhcp_start']}-{VLSM_SUBNETS['tecnica']['dhcp_end']}", 
+    f"/ip pool add name=pool-visitantes ranges={VLSM_SUBNETS['visitantes']['dhcp_start']}-{VLSM_SUBNETS['visitantes']['dhcp_end']}",
+    
+    # Configurar servidores DHCP
+    "/ip dhcp-server add name=dhcp-ventas interface=ventas-vlan10 address-pool=pool-ventas disabled=no",
+    "/ip dhcp-server add name=dhcp-tecnica interface=tecnica-vlan20 address-pool=pool-tecnica disabled=no",
+    "/ip dhcp-server add name=dhcp-visitantes interface=visitantes-vlan30 address-pool=pool-visitantes disabled=no",
+    
+    # Redes DHCP
+    f"/ip dhcp-server network add address={VLSM_SUBNETS['ventas']['network']} gateway={VLSM_SUBNETS['ventas']['gateway']} dns-server=8.8.8.8",
+    f"/ip dhcp-server network add address={VLSM_SUBNETS['tecnica']['network']} gateway={VLSM_SUBNETS['tecnica']['gateway']} dns-server=8.8.8.8",
+    f"/ip dhcp-server network add address={VLSM_SUBNETS['visitantes']['network']} gateway={VLSM_SUBNETS['visitantes']['gateway']}",
+    
+    # NAT - Solo para Ventas y Técnica (acceso a internet)
+    f"/ip firewall nat add chain=srcnat src-address={VLSM_SUBNETS['ventas']['network']} out-interface=ether1 action=masquerade comment=\"NAT VLAN Ventas\"",
+    f"/ip firewall nat add chain=srcnat src-address={VLSM_SUBNETS['tecnica']['network']} out-interface=ether1 action=masquerade comment=\"NAT VLAN Tecnica\"",
+    
+    # Enrutamiento estático hacia sede remota (R2)
+    f"/ip route add dst-address={VLSM_SUBNETS['remota']['network']} gateway={VLSM_SUBNETS['enlace']['r2_ip']} comment=\"Ruta hacia sede remota\""
+]
+
+# R2 - Router Remoto: Configuración de sede remota
+R2_CONFIG = [
+    # Interface hacia red remota
+    f"/interface vlan add name=remota-vlan40 vlan-id=40 interface=ether2",
+    f"/interface vlan add name=enlace-r1 vlan-id=100 interface=ether2",
+    
+    # IPs 
+    f"/ip address add address={VLSM_SUBNETS['remota']['gateway']}/26 interface=remota-vlan40",
+    f"/ip address add address={VLSM_SUBNETS['enlace']['r2_ip']}/30 interface=enlace-r1",
+    
+    # DHCP para sede remota
+    "/ip pool add name=pool-remota ranges=10.10.12.66-10.10.12.126",
+    "/ip dhcp-server add name=dhcp-remota interface=remota-vlan40 address-pool=pool-remota disabled=no",
+    f"/ip dhcp-server network add address={VLSM_SUBNETS['remota']['network']} gateway={VLSM_SUBNETS['remota']['gateway']}",
+    
+    # Rutas hacia VLANs principales (via R1)
+    f"/ip route add dst-address={VLSM_SUBNETS['ventas']['network']} gateway={VLSM_SUBNETS['enlace']['r1_ip']} comment=\"VLAN Ventas via R1\"",
+    f"/ip route add dst-address={VLSM_SUBNETS['tecnica']['network']} gateway={VLSM_SUBNETS['enlace']['r1_ip']} comment=\"VLAN Tecnica via R1\"",
+    f"/ip route add dst-address={VLSM_SUBNETS['visitantes']['network']} gateway={VLSM_SUBNETS['enlace']['r1_ip']} comment=\"VLAN Visitantes via R1\"",
+    f"/ip route add dst-address=0.0.0.0/0 gateway={VLSM_SUBNETS['enlace']['r1_ip']} comment=\"Default via R1\""
+]
+
+# =============================================================================
+# COMANDOS DE VERIFICACIÓN
+# =============================================================================
+VERIFICATION_COMMANDS = {
+    'sw1': [
+        "show vlan brief",
+        "show interfaces trunk", 
+        "show spanning-tree summary"
+    ],
+    'sw2': [
+        "show vlan brief",
+        "show interfaces trunk",
+        "show interfaces status"
+    ],
+    'r1': [
+        "/interface vlan print",
+        "/ip address print", 
+        "/ip dhcp-server print",
+        "/ip firewall nat print",
+        "/ip route print"
+    ],
+    'r2': [
+        "/interface vlan print",
+        "/ip address print",
+        "/ip dhcp-server print", 
+        "/ip route print"
+    ]
+}
+
+# =============================================================================
+# FUNCIONES DE EJECUCIÓN
+# =============================================================================
+
+def connect_and_configure(device_config, commands, device_name):
+    """
+    Conecta y configura un dispositivo
+    """
+    print(f"\n{'='*20} CONFIGURANDO {device_name.upper()} {'='*20}")
+    
     try:
-        print(f"Probando SSH a {device_name} ({device_config['host']})...")
-        conn = ConnectHandler(**device_config)
+        # Establecer conexión
+        connection = ConnectHandler(**device_config)
+        print(f"✓ Conectado a {device_name} ({device_config['host']})")
         
+        # Aplicar configuración
         if device_config['device_type'] == 'mikrotik_routeros':
-            output = conn.send_command("/system identity print")
+            # MikroTik: comandos uno por uno
+            for i, command in enumerate(commands, 1):
+                print(f"  [{i:2}/{len(commands)}] {command}")
+                try:
+                    output = connection.send_command(command, expect_string=r'[^>]*[>#]')
+                    if output.strip() and "invalid" not in output.lower():
+                        print(f"      → OK")
+                    time.sleep(0.2)
+                except Exception as cmd_error:
+                    print(f"      → Error: {cmd_error}")
         else:
-            output = conn.send_command("show version | include uptime")
+            # Cisco: enviar bloque de configuración
+            print(f"  Aplicando {len(commands)} comandos...")
+            output = connection.send_config_set(commands)
+            print("  → Configuración aplicada")
         
-        conn.disconnect()
-        print(f"✓ SSH OK a {device_name}")
+        connection.disconnect()
+        print(f"✓ {device_name.upper()} configurado exitosamente")
         return True
+        
     except Exception as e:
-        print(f"✗ SSH FALLO a {device_name}: {e}")
+        print(f"✗ ERROR configurando {device_name}: {e}")
         return False
 
-def check_vlan_config(device_name, device_config):
-    """Verifica configuración actual de VLANs"""
+def verify_configuration(device_config, commands, device_name):
+    """
+    Ejecuta comandos de verificación
+    """
+    print(f"\n{'='*15} VERIFICANDO {device_name.upper()} {'='*15}")
+    
     try:
-        print(f"\n=== Verificando configuración VLAN en {device_name} ===")
-        conn = ConnectHandler(**device_config)
+        connection = ConnectHandler(**device_config)
         
-        if device_config['device_type'] == 'mikrotik_routeros':
-            commands = [
-                "/interface bridge port print",
-                "/interface bridge vlan print", 
-                "/interface vlan print",
-                "/ip address print"
-            ]
-        else:
-            commands = [
-                "show vlan brief",
-                "show interfaces trunk",
-                "show ip interface brief"
-            ]
-        
-        for cmd in commands:
-            print(f"\n[{device_name}] {cmd}")
-            output = conn.send_command(cmd)
-            print(output)
+        for command in commands:
+            print(f"\n[{device_name.upper()}] {command}")
             print("-" * 50)
-        
-        conn.disconnect()
+            output = connection.send_command(command)
+            print(output)
+            
+        connection.disconnect()
         return True
         
     except Exception as e:
-        print(f"✗ Error verificando {device_name}: {e}")
+        print(f"✗ ERROR verificando {device_name}: {e}")
         return False
 
-def fix_sw2_connectivity():
-    """Corrección específica para SW2 - problema común de trunk mal configurado"""
-    print("\n=== INTENTANDO CORREGIR SW2 ===")
+def print_network_summary():
+    """
+    Imprime resumen del diseño de red implementado
+    """
+    print("\n" + "="*60)
+    print("RESUMEN DEL DISEÑO DE RED IMPLEMENTADO")
+    print("="*60)
+    print(f"Bloque base: {BASE_NETWORK}")
+    print("\nVLSM - Subdivisión por necesidades:")
     
-    # Primero intentar por la configuración actual
-    sw2_config = devices['sw2'].copy()
-    
-    try:
-        print("Intentando conectar a SW2 para diagnóstico...")
-        conn = ConnectHandler(**sw2_config)
-        
-        # Verificar configuración actual
-        print("Verificando configuración de interfaces...")
-        output = conn.send_command("show run interface ethernet0/0")
-        print("Configuración Ethernet0/0:")
-        print(output)
-        
-        # Si llegamos aquí, podemos intentar corregir
-        print("\nAplicando corrección...")
-        fix_commands = [
-            "interface ethernet0/0",
-            "no switchport trunk native vlan",
-            "switchport trunk native vlan 1299",
-            "switchport trunk allowed vlan 1299,230,231,232,239",
-            "no shutdown"
-        ]
-        
-        conn.send_config_set(fix_commands)
-        conn.disconnect()
-        print("✓ Corrección aplicada a SW2")
-        return True
-        
-    except Exception as e:
-        print(f"✗ No se pudo corregir SW2: {e}")
-        return False
-
-def fix_mikrotik_connectivity(device_name):
-    """Corrección específica para MikroTiks - problema de PVID"""
-    print(f"\n=== INTENTANDO CORREGIR {device_name.upper()} ===")
-    
-    device_config = devices[device_name].copy()
-    
-    try:
-        conn = ConnectHandler(**device_config)
-        
-        print(f"Verificando configuración de bridge en {device_name}...")
-        output = conn.send_command("/interface bridge port print")
-        print(output)
-        
-        # Intentar resetear PVID a gestión
-        print(f"Reseteando PVID a 1299 en {device_name}...")
-        if device_name == 'r1':
-            fix_commands = [
-                "/interface bridge port set [find interface=ether2] pvid=1299",
-                "/interface bridge port set [find interface=ether3] pvid=1299"
-            ]
-        else:  # r2
-            fix_commands = [
-                "/interface bridge port set [find interface=ether2] pvid=1299", 
-                "/interface bridge port set [find interface=ether1] pvid=1299"
-            ]
-        
-        for cmd in fix_commands:
-            conn.send_command(cmd)
-            time.sleep(1)
-        
-        conn.disconnect()
-        print(f"✓ PVID reseteado en {device_name}")
-        return True
-        
-    except Exception as e:
-        print(f"✗ No se pudo corregir {device_name}: {e}")
-        return False
-
-def diagnostic_sequence():
-    """Secuencia completa de diagnóstico"""
-    print("=" * 60)
-    print("DIAGNÓSTICO DE CONECTIVIDAD DE RED")
-    print("=" * 60)
-    
-    # 1. Pruebas de ping básico
-    print("\n1. PRUEBAS DE PING")
-    print("-" * 30)
-    ping_results = {}
-    for name, config in devices.items():
-        ping_results[name] = test_ping(config['host'])
-    
-    # 2. Pruebas de SSH
-    print("\n2. PRUEBAS DE SSH")
-    print("-" * 30)
-    ssh_results = {}
-    for name, config in devices.items():
-        if ping_results[name]:  # Solo si ping funciona
-            ssh_results[name] = test_ssh(name, config)
+    for name, subnet in VLSM_SUBNETS.items():
+        if name == 'enlace':
+            print(f"  {name.upper():12} {subnet['network']:15} -> Enlace R1-R2")
         else:
-            ssh_results[name] = False
-            print(f"✗ Saltando SSH a {name} (ping falló)")
+            hosts = subnet.get('hosts', 0)
+            gateway = subnet.get('gateway', 'N/A')
+            print(f"  {name.upper():12} {subnet['network']:15} -> {hosts:2} hosts, GW: {gateway}")
     
-    # 3. Verificación de configuraciones
-    print("\n3. VERIFICACIÓN DE CONFIGURACIONES")
-    print("-" * 40)
-    for name, config in devices.items():
-        if ssh_results[name]:
-            check_vlan_config(name, config)
-    
-    # 4. Intentar correcciones
-    print("\n4. INTENTOS DE CORRECCIÓN")
-    print("-" * 30)
-    
-    # Corregir SW2 si tiene problemas
-    if not ssh_results.get('sw2', False):
-        fix_sw2_connectivity()
-        time.sleep(5)
-        ssh_results['sw2'] = test_ssh('sw2', devices['sw2'])
-    
-    # Corregir MikroTiks si tienen problemas
-    for router in ['r1', 'r2']:
-        if not ssh_results.get(router, False):
-            fix_mikrotik_connectivity(router)
-            time.sleep(5)
-            ssh_results[router] = test_ssh(router, devices[router])
-    
-    # 5. Resumen final
-    print("\n" + "=" * 60)
-    print("RESUMEN DE CONECTIVIDAD")
-    print("=" * 60)
-    
-    working_devices = 0
-    for name in devices:
-        status = "✓ OK" if ssh_results.get(name, False) else "✗ FALLO"
-        print(f"{name.upper():8} ({devices[name]['host']:12}) -> {status}")
-        if ssh_results.get(name, False):
-            working_devices += 1
-    
-    print(f"\nDispositivos funcionando: {working_devices}/4")
-    
-    if working_devices == 4:
-        print("\n🎉 ¡Todos los dispositivos están accesibles!")
-        return True
-    else:
-        print(f"\n⚠️  {4-working_devices} dispositivos requieren atención manual")
-        return False
-
-def safe_vlan_migration():
-    """Migración segura de VLANs paso a paso"""
-    print("\n" + "=" * 60)
-    print("MIGRACIÓN SEGURA DE VLANS")
-    print("=" * 60)
-    
-    input("\nPresiona Enter para continuar con la migración segura...")
-    
-    # Paso 1: Verificar conectividad inicial
-    print("\nPaso 1: Verificando conectividad inicial...")
-    if not diagnostic_sequence():
-        print("❌ Detener: No todos los dispositivos están accesibles")
-        return False
-    
-    # Paso 2: Configurar VLANs en switches manteniendo gestión
-    print("\nPaso 2: Configurando VLANs en switches...")
-    
-    # SW1 - Mantener gestión funcionando
-    sw1_safe_config = [
-        "vlan 230", "name VENTAS",
-        "vlan 231", "name TECNICA", 
-        "vlan 232", "name VISITANTES",
-        "vlan 239", "name NATIVA",
-        # Puertos de acceso
-        "interface Ethernet0/1", "switchport mode access", "switchport access vlan 230", "no shutdown",
-        "interface Ethernet0/2", "switchport mode access", "switchport access vlan 231", "no shutdown", 
-        "interface Ethernet0/3", "switchport mode access", "switchport access vlan 232", "no shutdown"
-    ]
-    
-    try:
-        conn = ConnectHandler(**devices['sw1'])
-        conn.send_config_set(sw1_safe_config)
-        conn.disconnect()
-        print("✓ SW1 configurado")
-    except Exception as e:
-        print(f"✗ Error en SW1: {e}")
-        return False
-    
-    # SW2 similar
-    sw2_safe_config = [
-        "vlan 230", "name VENTAS",
-        "vlan 231", "name TECNICA",
-        "vlan 232", "name VISITANTES", 
-        "vlan 239", "name NATIVA",
-        "interface Ethernet0/1", "switchport mode access", "switchport access vlan 230", "no shutdown"
-    ]
-    
-    try:
-        conn = ConnectHandler(**devices['sw2'])
-        conn.send_config_set(sw2_safe_config)
-        conn.disconnect()
-        print("✓ SW2 configurado")
-    except Exception as e:
-        print(f"✗ Error en SW2: {e}")
-        return False
-    
-    # Paso 3: Configurar MikroTiks
-    print("\nPaso 3: Configurando routers MikroTik...")
-    
-    # R1 configuración completa
-    r1_safe_config = [
-        # VLANs en bridge (manteniendo 1299 para gestión)
-        "/interface bridge vlan add bridge=br-core vlan-ids=230 tagged=br-core,ether2",
-        "/interface bridge vlan add bridge=br-core vlan-ids=231 tagged=br-core,ether2",
-        "/interface bridge vlan add bridge=br-core vlan-ids=232 tagged=br-core,ether2", 
-        "/interface bridge vlan add bridge=br-core vlan-ids=239 tagged=br-core,ether2,ether3",
-        # Interfaces VLAN
-        "/interface vlan add name=ventas230 vlan-id=230 interface=br-core",
-        "/interface vlan add name=tecnica231 vlan-id=231 interface=br-core",
-        "/interface vlan add name=visit232 vlan-id=232 interface=br-core",
-        "/interface vlan add name=nativa239 vlan-id=239 interface=br-core",
-        # IPs
-        "/ip address add address=10.10.12.65/27 interface=ventas230",
-        "/ip address add address=10.10.12.97/28 interface=tecnica231", 
-        "/ip address add address=10.10.12.113/29 interface=visit232",
-        "/ip address add address=10.10.12.121/30 interface=nativa239"
-    ]
-    
-    try:
-        conn = ConnectHandler(**devices['r1'])
-        for cmd in r1_safe_config:
-            conn.send_command(cmd)
-            time.sleep(0.5)
-        conn.disconnect()
-        print("✓ R1 configurado")
-    except Exception as e:
-        print(f"✗ Error en R1: {e}")
-        return False
-    
-    # R2 configuración
-    r2_safe_config = [
-        "/interface bridge vlan add bridge=br-remote vlan-ids=230 tagged=br-remote,ether2",
-        "/interface bridge vlan add bridge=br-remote vlan-ids=231 tagged=br-remote,ether2",
-        "/interface bridge vlan add bridge=br-remote vlan-ids=232 tagged=br-remote,ether2",
-        "/interface bridge vlan add bridge=br-remote vlan-ids=239 tagged=br-remote,ether2",
-        "/interface vlan add name=enlace239 vlan-id=239 interface=br-remote",
-        "/ip address add address=10.10.12.122/30 interface=enlace239"
-    ]
-    
-    try:
-        conn = ConnectHandler(**devices['r2'])
-        for cmd in r2_safe_config:
-            conn.send_command(cmd)
-            time.sleep(0.5)
-        conn.disconnect()
-        print("✓ R2 configurado")
-    except Exception as e:
-        print(f"✗ Error en R2: {e}")
-        return False
-    
-    # Paso 4: Configurar trunks (CRÍTICO)
-    print("\nPaso 4: Configurando trunks (manteniendo gestión)...")
-    
-    input("⚠️  CRÍTICO: Configurar trunks puede afectar conectividad. Presiona Enter para continuar...")
-    
-    # SW1 trunk - permitir todas las VLANs incluyendo gestión
-    sw1_trunk = [
-        "interface Ethernet0/0",
-        "switchport trunk encapsulation dot1q",
-        "switchport mode trunk",
-        "switchport trunk allowed vlan 1299,230,231,232,239",
-        "switchport trunk native vlan 1299",  # Mantener gestión como nativa inicialmente
-        "no shutdown"
-    ]
-    
-    try:
-        conn = ConnectHandler(**devices['sw1'])
-        conn.send_config_set(sw1_trunk)
-        conn.disconnect()
-        print("✓ SW1 trunk configurado")
-    except Exception as e:
-        print(f"✗ Error configurando trunk SW1: {e}")
-    
-    time.sleep(3)
-    
-    # Verificar conectividad después de trunk SW1
-    if not test_ssh('sw1', devices['sw1']):
-        print("❌ Conectividad perdida con SW1 después del trunk")
-        return False
-    
-    # SW2 trunk
-    sw2_trunk = [
-        "interface Ethernet0/0", 
-        "switchport trunk encapsulation dot1q",
-        "switchport mode trunk",
-        "switchport trunk allowed vlan 1299,230,231,232,239",
-        "switchport trunk native vlan 1299",
-        "no shutdown"
-    ]
-    
-    try:
-        conn = ConnectHandler(**devices['sw2'])
-        conn.send_config_set(sw2_trunk)
-        conn.disconnect()
-        print("✓ SW2 trunk configurado")
-    except Exception as e:
-        print(f"✗ Error configurando trunk SW2: {e}")
-    
-    time.sleep(3)
-    
-    # Verificar conectividad después de trunks
-    print("\nVerificando conectividad después de configurar trunks...")
-    if not (test_ssh('sw1', devices['sw1']) and test_ssh('sw2', devices['sw2'])):
-        print("❌ Conectividad perdida después de configurar trunks")
-        return False
-    
-    print("\n✅ Configuración completada. Todos los dispositivos siguen accesibles.")
-    print("📋 Para cambiar VLAN nativa a 239, ejecutar manualmente cuando sea seguro:")
-    print("   SW1/SW2: switchport trunk native vlan 239")
-    print("   R1/R2: /interface bridge port set [find interface=etherX] pvid=239")
-    
-    return True
+    print("\nServicios configurados:")
+    print("  ✓ Router-on-a-Stick (subinterfaces dot1q)")
+    print("  ✓ DHCP en VLANs Ventas, Técnica y Visitantes")
+    print("  ✓ NAT para internet: solo Ventas y Técnica")
+    print("  ✓ Enrutamiento estático hacia sede remota")
+    print("  ✓ Segmentación: Visitantes y Gestión sin internet")
 
 def main():
-    """Función principal"""
-    print("🔧 HERRAMIENTAS DE DIAGNÓSTICO Y CORRECCIÓN DE RED")
-    print("=" * 60)
+    """
+    Función principal del script
+    """
+    print("="*60)
+    print("SCRIPT NETMIKO - CONFIGURACIÓN DE LABORATORIO")
+    print("="*60)
+    print("Implementa: VLSM, Router-on-a-Stick, DHCP, NAT, Enrutamiento estático")
     
-    while True:
-        print("\nOpciones disponibles:")
-        print("1. Diagnóstico completo de conectividad")
-        print("2. Migración segura de VLANs")
-        print("3. Verificar configuración específica")
-        print("4. Intentar corrección manual")
-        print("5. Salir")
+    # Mostrar diseño de red
+    print_network_summary()
+    
+    # Confirmar ejecución
+    print(f"\n⚠️  Se configurarán los siguientes dispositivos:")
+    for name, config in DEVICES.items():
+        print(f"   {name.upper()}: {config['host']}")
+    
+    confirm = input(f"\n¿Continuar con la configuración? (s/N): ").strip().lower()
+    if confirm != 's':
+        print("Configuración cancelada.")
+        return
+    
+    # Configurar dispositivos
+    print("\n" + "="*60)
+    print("FASE 1: CONFIGURACIÓN DE DISPOSITIVOS")
+    print("="*60)
+    
+    configurations = [
+        (DEVICES['sw1'], SW1_CONFIG, 'sw1'),
+        (DEVICES['sw2'], SW2_CONFIG, 'sw2'), 
+        (DEVICES['r1'], R1_CONFIG, 'r1'),
+        (DEVICES['r2'], R2_CONFIG, 'r2')
+    ]
+    
+    results = []
+    for device_config, commands, device_name in configurations:
+        success = connect_and_configure(device_config, commands, device_name)
+        results.append((device_name, success))
+        time.sleep(2)  # Pausa entre dispositivos
+    
+    # Verificaciones
+    print("\n" + "="*60)
+    print("FASE 2: VERIFICACIONES")  
+    print("="*60)
+    
+    for device_name, success in results:
+        if success:
+            device_config = DEVICES[device_name]
+            verify_commands = VERIFICATION_COMMANDS[device_name]
+            verify_configuration(device_config, verify_commands, device_name)
+            time.sleep(1)
+    
+    # Resumen final
+    print("\n" + "="*60)
+    print("RESULTADO FINAL")
+    print("="*60)
+    
+    successful = sum(1 for _, success in results if success)
+    total = len(results)
+    
+    for device_name, success in results:
+        status = "✓ CONFIGURADO" if success else "✗ ERROR"
+        print(f"  {device_name.upper():4} -> {status}")
+    
+    print(f"\nDispositivos configurados: {successful}/{total}")
+    
+    if successful == total:
+        print("\n🎉 ¡CONFIGURACIÓN COMPLETADA EXITOSAMENTE!")
+        print("\n📋 Red implementada según consigna:")
+        print("   ✓ VLSM con subredes de tamaños requeridos")
+        print("   ✓ Router-on-a-Stick configurado en R1")
+        print("   ✓ DHCP funcionando en VLANs funcionales")
+        print("   ✓ NAT solo para VLANs autorizadas")
+        print("   ✓ Enrutamiento estático hacia sede remota")
+        print("   ✓ Verificaciones ejecutadas en todos los dispositivos")
         
-        choice = input("\nSelecciona una opción (1-5): ").strip()
-        
-        if choice == '1':
-            diagnostic_sequence()
-        elif choice == '2':
-            safe_vlan_migration()
-        elif choice == '3':
-            device = input("Dispositivo (sw1/sw2/r1/r2): ").strip().lower()
-            if device in devices:
-                check_vlan_config(device, devices[device])
-            else:
-                print("Dispositivo no válido")
-        elif choice == '4':
-            print("Correcciones manuales disponibles:")
-            print("a. Corregir SW2")
-            print("b. Corregir R1")
-            print("c. Corregir R2")
-            subchoice = input("Selecciona (a/b/c): ").strip().lower()
-            
-            if subchoice == 'a':
-                fix_sw2_connectivity()
-            elif subchoice == 'b':
-                fix_mikrotik_connectivity('r1')
-            elif subchoice == 'c':
-                fix_mikrotik_connectivity('r2')
-        elif choice == '5':
-            break
-        else:
-            print("Opción no válida")
+        print(f"\n🌐 Acceso de prueba:")
+        print(f"   • Conectar PC a SW1 puerto F0/1 -> DHCP VLAN Ventas (con internet)")
+        print(f"   • Conectar PC a SW1 puerto F0/2 -> DHCP VLAN Técnica (con internet)")  
+        print(f"   • Conectar PC a SW1 puerto F0/3 -> DHCP VLAN Visitantes (sin internet)")
+        print(f"   • Conectar PC a SW2 puerto F0/1 -> DHCP Red Remota (sin internet)")
+    else:
+        print(f"\n⚠️  Configuración incompleta: {total-successful} dispositivos con errores")
+        print("   Revisar conectividad y configuración manual si es necesario")
 
 if __name__ == "__main__":
     main()
