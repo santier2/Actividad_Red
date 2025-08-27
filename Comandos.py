@@ -89,16 +89,6 @@ r1_phase2 = [
 
 # R2 preparar VLANs
 r2_phase1 = [
-    # Asegurar que el bridge y puertos existen (se puede omitir si ya están creados)
-    "/interface bridge add name=br-remote vlan-filtering=yes",
-    "/interface bridge port add bridge=br-remote interface=ether2 pvid=239",
-    "/interface bridge port add bridge=br-remote interface=ether1 pvid=1299",
-
-    # Mantener VLANs base
-    "/interface bridge vlan add bridge=br-remote vlan-ids=239 tagged=br-remote untagged=ether2",
-    "/interface bridge vlan add bridge=br-remote vlan-ids=1299 tagged=br-remote,ether2 untagged=ether1",
-
-    # Agregar VLANs nuevas
     "/interface bridge vlan add bridge=br-remote vlan-ids=230 tagged=br-remote,ether2",
     "/interface bridge vlan add bridge=br-remote vlan-ids=231 tagged=br-remote,ether2",
     "/interface bridge vlan add bridge=br-remote vlan-ids=232 tagged=br-remote,ether2",
@@ -147,6 +137,7 @@ if __name__ == "__main__":
     run_check(sw2, ["show vlan brief","show interface trunk"])
     run_check(r1, ["/interface bridge vlan print","/ip address print","/ip dhcp-server print"])
     run_check(r2, ["/interface bridge vlan print","/ip address print"])
+
 
 
 
